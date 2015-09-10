@@ -21,19 +21,21 @@
 
 (defn- table-create-index
   [conn tname schema]
-  (db/db-do-commands conn (db/create-table-ddl
-                           tname
-                           (doall
-                            (map (fn [[k v]]
-                                   (vector k (first v))) schema))))
+  (db/db-do-commands conn
+                     (apply db/create-table-ddl
+                            tname
+                            (doall
+                             (map (fn [[k v]]
+                                    (vector k (first v))) schema))))
   (apply db/db-do-commands conn (doall
                                  (map (fn [[k v]]
                                         (str "CREATE INDEX "
                                              (name k)
+                                             tname
                                              "_ix ON "
                                              tname
-                                             " (" (name k) ")"))
-                                      (dissoc :record schema)))))
+                                             "(" (name k) ")"))
+                                      (dissoc schema :record)))))
 
 (defn- get-vals
   [s bs]
@@ -41,15 +43,25 @@
              ((second v) bs)) s)
       vec))
 
+(defrecord biosequenceDB [spec])
+
+(defn- insert-bs
+  [c tname k v]
+  (apply db/insert! c tname (map #(zipmap k %) v)))
+
 (defn init-and-save
   ([conn tname col] (init-and-save conn tname col nil))
   ([conn tname col schema]
    (let [s (merge {:accession ["varchar(256)" #(bs/accession %)]
                    :record ["text" #(pr-str %)]}
                   schema)]
-     (db/with-db-transaction [c @conn]
-       (table-create-index c tname s)
-       (apply db/insert! (keys schema) (map #(get-vals schema %) col))))))
+     (db/with-db-transaction [c conn]
+       (try
+         (let [k (vec (keys s))
+               v (map #(get-vals s %) col)]
+           (table-create-index c tname s)
+           (insert-bs c tname k v))
+         (catch Exception e (.getNextException e)))))))
 
 (defn append-bioseqs
   [conn tname col])
@@ -62,3 +74,9 @@
 
 
 
+;; (jdbc/db-do-commands (spec "jellydb" :user "jason" :password "7004jason")
+;;                            (jdbc/create-table-ddl
+;;                             :ticks2
+;;                             [:id :serial "PRIMARY KEY"]
+;;                             [:body :varchar "NOT NULL"]
+;;                             [:tick :timestamp "NOT NULL" "DEFAULT CURRENT_TIMESTAMP"]))
